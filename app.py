@@ -5,11 +5,11 @@ import xml.etree.ElementTree as ET
 # --- 1. إعدادات الصفحة ---
 st.set_page_config(page_title="تحصيل شان الحديثة", layout="wide")
 
-st.title("💸 مديونية العملاء - مطابقة تامة")
-st.markdown("### المستهدف: **218,789.96** ر.س (40 عميل)")
+st.title("💸 مديونية العملاء - مطابقة ميزان المراجعة")
+st.markdown(f"### المستهدف: **218,789.96** ر.س")
 
-# --- 2. دالة قراءة البيانات (الخام وبدون أي شروط) ---
-def load_raw_data(file):
+# --- 2. دالة القراءة المباشرة ---
+def load_data(file):
     if file is None: return None
     file.seek(0)
     try:
@@ -26,55 +26,53 @@ def load_raw_data(file):
 # --- 3. القائمة الجانبية ---
 with st.sidebar:
     st.header("📂 استيراد البيانات")
-    f_ledger = st.file_uploader("ارفع ملف LedgerBook.xml", type=['xml'], key="ledger_final_fix")
+    f_ledger = st.file_uploader("ارفع ملف LedgerBook.xml", type=['xml'], key="ledger_v_final")
 
 # --- 4. المعالجة والمطابقة ---
 if f_ledger:
-    df_raw = load_raw_data(f_ledger)
+    df_raw = load_data(f_ledger)
     if df_raw is not None:
         try:
-            # تحويل المبالغ فوراً
+            # تحويل المبالغ
             df_raw['Dr'] = pd.to_numeric(df_raw['Dr'], errors='coerce').fillna(0)
             df_raw['Cr'] = pd.to_numeric(df_raw['Cr'], errors='coerce').fillna(0)
             
-            # التجميع حسب العميل (LedgerName)
+            # التجميع حسب العميل
             summary = df_raw.groupby('LedgerName').agg({
                 'Dr': 'sum', 
                 'Cr': 'sum',
-                'AcLedger': 'first' # نحتفظ برقم الحساب للفلترة
+                'AcLedger': 'first'
             }).reset_index()
             
             summary['Balance'] = summary['Dr'] - summary['Cr']
 
-            # --- الفلترة المرنة جداً ---
-            # 1. نستبعد فقط البنوك والعهد الرئيسية لتنظيف القائمة
-            blacklist = ["مصرف الراجحي", "البنك الأهلي", "الصندوق الرئيسي", "نقدية في الصندوق", "عهد", "مصاريف"]
+            # --- الفلترة بناءً على ميزان المراجعة ---
+            # 1. الحسابات التي تبدأ بـ 1131 (العملاء) أو 221 (الموردين ذوي الأرصدة المدينة)
+            # 2. استبعاد البنوك والصناديق الرئيسية
+            exclude_names = ["مصرف الراجحي", "البنك الأهلي", "صندوق", "نقدية", "شبكة"]
             
-            # 2. نأخذ أي حساب يبدأ بـ 113 أو 221 (هذا سيجلب خالد المحمادي وبقية الـ 40 عميل)
             final_debtors = summary[
-                (summary['AcLedger'].astype(str).str.startswith(('113', '221'))) & 
-                (~summary['LedgerName'].str.contains('|'.join(blacklist), na=False)) &
+                (summary['AcLedger'].astype(str).str.startswith(('1131', '221'))) & 
+                (~summary['LedgerName'].str.contains('|'.join(exclude_names), na=False)) &
                 (summary['Balance'] > 0.01)
             ].sort_values('Balance', ascending=False)
 
-            # --- 5. عرض النتائج النهائية ---
-            current_total = final_debtors['Balance'].sum()
-            count_found = len(final_debtors)
+            # --- 5. عرض النتائج ---
+            total_val = final_debtors['Balance'].sum()
             
             c1, c2 = st.columns(2)
-            c1.metric("إجمالي مديونية العملاء", f"{current_total:,.2f} ر.س")
-            c2.metric("عدد العملاء المكتشفين", f"{count_found}")
+            c1.metric("إجمالي المديونية (مطابق للميزان)", f"{total_val:,.2f} ر.س")
+            c2.metric("عدد الحسابات المدينة", f"{len(final_debtors)}")
             
-            target_value = 218789.96
-            if abs(current_total - target_value) < 1:
-                st.success(f"✅ تم التطابق التام مع البرنامج: {target_value:,.2f} ر.س")
+            if abs(total_val - 218789.96) < 1:
+                st.success("✅ تم التطابق التام مع تقرير البرنامج وميزان المراجعة!")
             else:
-                st.warning(f"الفرق المتبقي للمطابقة: {target_value - current_total:,.2f} ر.س")
+                st.warning(f"الفرق الحالي: {218789.96 - total_val:,.2f} ر.س")
 
-            st.subheader("📋 القائمة النهائية (المطابقة للبرنامج)")
+            st.subheader("📋 كشف الأرصدة (العملاء والموردين المدينين)")
             st.dataframe(
                 final_debtors[['LedgerName', 'Balance']], 
-                column_config={"Balance": st.column_config.NumberColumn("الرصيد", format="%.2f")},
+                column_config={"Balance": st.column_config.NumberColumn("الرصيد المتبقي", format="%.2f")},
                 use_container_width=True, 
                 height=600
             )
@@ -82,4 +80,4 @@ if f_ledger:
         except Exception as e:
             st.error(f"خطأ أثناء المعالجة: {e}")
 else:
-    st.info("💡 الرجاء رفع ملف LedgerBook.xml للبدء.")
+    st.info("💡 ارفع ملف LedgerBook.xml للبدء.")
