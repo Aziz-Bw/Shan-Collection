@@ -6,46 +6,46 @@ import xml.etree.ElementTree as ET
 st.set_page_config(page_title="تحصيل شان الحديثة", layout="wide")
 
 st.title("💸 مديونية العملاء - مطابقة تامة")
-st.info("المستهدف: 218,789.96 ر.س (40 عميل)")
+st.markdown("### المستهدف: **218,789.96** ر.س (40 عميل)")
 
-# --- 2. دالة القراءة المصححة ---
+# --- 2. دالة القراءة المستقرة والآمنة ---
 def get_xml_df(file):
     if file is None: return None
     file.seek(0)
     try:
+        # قراءة الملف ومعالجة كل سطر بشكل منفصل لضمان عدم فقدان بيانات
         tree = ET.parse(file)
         root = tree.getroot()
-        # تصحيح: استخراج البيانات بشكل مباشر وآمن
-        data = []
+        all_rows = []
         for row in root:
-            data.append({child.tag: child.text for child in row})
-        return pd.DataFrame(data)
+            all_rows.append({child.tag: child.text for child in row})
+        return pd.DataFrame(all_rows)
     except Exception as e:
-        st.error(f"خطأ في قراءة الملف: {e}")
+        st.error(f"حدث خطأ في قراءة الملف: {e}")
         return None
 
-# --- 3. القائمة الجانبية ---
+# --- 3. القائمة الجانبية للرفع ---
 with st.sidebar:
     st.header("📂 استيراد البيانات")
-    f_ledger = st.file_uploader("ارفع ملف LedgerBook.xml", type=['xml'], key="ledger_main")
+    f_ledger = st.file_uploader("ارفع ملف LedgerBook.xml", type=['xml'], key="ledger_input")
 
-# --- 4. المعالجة والمطابقة ---
+# --- 4. المعالجة والمطابقة التامة ---
 if f_ledger:
     df = get_xml_df(f_ledger)
     if df is not None:
         try:
-            # تحويل الأرقام
+            # تحويل المبالغ لأرقام عشرية دقيقة
             df['Dr'] = pd.to_numeric(df['Dr'], errors='coerce').fillna(0)
             df['Cr'] = pd.to_numeric(df['Cr'], errors='coerce').fillna(0)
             
-            # فلترة حسابات العملاء (تبدأ بـ 113 أو 221)
+            # الفلترة الذكية بناءً على PDF: حسابات 113 و 221 فقط
             mask_customers = df['AcLedger'].astype(str).str.startswith(('113', '221'))
-            df_customers = df[mask_customers]
+            df_customers = df[mask_customers].copy()
             
-            # قائمة الاستبعاد لضمان دقة الرقم
+            # قائمة الاستبعاد لضمان التطابق مع البرنامج (البنوك والعهد)
             exclude_list = ["مصرف الراجحي", "البنك الأهلي", "صندوق", "نقدية", "شبكة"]
             
-            # التجميع وحساب الأرصدة
+            # تجميع الحركات وحساب الرصيد لكل عميل
             summary = df_customers.groupby('LedgerName').agg({
                 'Dr': 'sum', 
                 'Cr': 'sum'
@@ -53,23 +53,26 @@ if f_ledger:
             
             summary['Balance'] = summary['Dr'] - summary['Cr']
             
-            # التصفية النهائية (بدون بنوك + رصيد أكبر من صفر)
+            # الفلترة النهائية: رصيد أكبر من صفر + استبعاد البنوك
             final = summary[
                 (~summary['LedgerName'].str.contains('|'.join(exclude_list), na=False)) & 
                 (summary['Balance'] > 0.01)
             ].sort_values('Balance', ascending=False)
             
-            # عرض النتائج
-            c1, c2 = st.columns(2)
+            # --- 5. عرض النتائج ---
             current_total = final['Balance'].sum()
-            c1.metric("إجمالي المديونية الحالية", f"{current_total:,.2f} ر.س")
-            c2.metric("عدد العملاء المكتشفين", f"{len(final)}")
+            count_found = len(final)
             
-            # التحقق من المطابقة التامة
-            if round(current_total, 2) == 218789.96:
-                st.success("✅ تم التطابق التام مع تقرير البرنامج (218,789.96)!")
+            c1, c2 = st.columns(2)
+            c1.metric("إجمالي المديونية الحالية", f"{current_total:,.2f} ر.س")
+            c2.metric("عدد العملاء المكتشفين", f"{count_found}")
+            
+            # التحقق من المطابقة (المستهدف 218,789.96)
+            target = 218789.96
+            if round(current_total, 2) == target:
+                st.success(f"✅ مبروك! تم التطابق التام مع تقرير البرنامج: {target:,.2f} ر.س")
             else:
-                diff = 218789.96 - current_total
+                diff = target - current_total
                 st.warning(f"الفرق المتبقي للمطابقة: {diff:,.2f} ر.س")
 
             st.divider()
@@ -82,6 +85,6 @@ if f_ledger:
             )
             
         except Exception as e:
-            st.error(f"حدث خطأ أثناء المعالجة: {e}")
+            st.error(f"خطأ أثناء معالجة البيانات: {e}")
 else:
     st.warning("⚠️ الرجاء رفع ملف LedgerBook.xml للبدء.")
