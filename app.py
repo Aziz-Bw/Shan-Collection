@@ -8,84 +8,86 @@ st.set_page_config(page_title="تحصيل شان الحديثة", layout="wide")
 st.title("💸 مديونية العملاء - مطابقة تامة")
 st.markdown("### المستهدف: **218,789.96** ر.س (40 عميل)")
 
-# --- 2. دالة القراءة المستقرة والآمنة ---
-def get_xml_df(file):
+# --- 2. دالة القراءة المباشرة (بدون تعقيد) ---
+def load_data(file):
     if file is None: return None
     file.seek(0)
     try:
-        # قراءة الملف ومعالجة كل سطر بشكل منفصل لضمان عدم فقدان بيانات
+        # قراءة أولية للملف بالكامل
         tree = ET.parse(file)
         root = tree.getroot()
-        all_rows = []
+        data = []
         for row in root:
-            all_rows.append({child.tag: child.text for child in row})
-        return pd.DataFrame(all_rows)
+            # استخراج كافة الحقول المتاحة في السطر
+            row_dict = {child.tag: child.text for child in row}
+            data.append(row_dict)
+        return pd.DataFrame(data)
     except Exception as e:
-        st.error(f"حدث خطأ في قراءة الملف: {e}")
+        st.error(f"فشل في قراءة الملف: {e}")
         return None
 
-# --- 3. القائمة الجانبية للرفع ---
+# --- 3. القائمة الجانبية ---
 with st.sidebar:
     st.header("📂 استيراد البيانات")
-    # استخدام مفتاح فريد لضمان عدم تداخل الذاكرة
-    f_ledger = st.file_uploader("ارفع ملف LedgerBook.xml", type=['xml'], key="ledger_final_input")
+    f_ledger = st.file_uploader("ارفع ملف LedgerBook.xml", type=['xml'], key="ledger_v5")
 
-# --- 4. المعالجة والمطابقة التامة ---
+# --- 4. المعالجة والتحليل ---
 if f_ledger:
-    df = get_xml_df(f_ledger)
-    if df is not None:
-        try:
-            # تحويل المبالغ لأرقام عشرية دقيقة
-            df['Dr'] = pd.to_numeric(df['Dr'], errors='coerce').fillna(0)
-            df['Cr'] = pd.to_numeric(df['Cr'], errors='coerce').fillna(0)
-            
-            # الفلترة الذكية بناءً على PDF: حسابات 113 و 221 فقط
-            mask_customers = df['AcLedger'].astype(str).str.startswith(('113', '221'))
-            df_customers = df[mask_customers].copy()
-            
-            # قائمة الاستبعاد لضمان التطابق مع البرنامج (البنوك والعهد)
-            exclude_list = ["مصرف الراجحي", "البنك الأهلي", "صندوق", "نقدية", "شبكة"]
-            
-            # تجميع الحركات وحساب الرصيد لكل عميل
-            summary = df_customers.groupby('LedgerName').agg({
-                'Dr': 'sum', 
-                'Cr': 'sum'
-            }).reset_index()
-            
-            summary['Balance'] = summary['Dr'] - summary['Cr']
-            
-            # الفلترة النهائية: رصيد أكبر من صفر + استبعاد البنوك
-            final = summary[
-                (~summary['LedgerName'].str.contains('|'.join(exclude_list), na=False)) & 
-                (summary['Balance'] > 0.01)
-            ].sort_values('Balance', ascending=False)
-            
-            # --- 5. عرض النتائج ---
-            current_total = final['Balance'].sum()
-            count_found = len(final)
-            
-            c1, c2 = st.columns(2)
-            c1.metric("إجمالي المديونية الحالية", f"{current_total:,.2f} ر.س")
-            c2.metric("عدد العملاء المكتشفين", f"{count_found}")
-            
-            # التحقق من المطابقة (المستهدف 218,789.96)
-            target = 218789.96
-            if round(current_total, 2) == target:
-                st.success(f"✅ تم التطابق التام مع تقرير البرنامج: {target:,.2f} ر.س")
-            else:
-                diff = target - current_total
-                st.warning(f"الفرق المتبقي للمطابقة: {diff:,.2f} ر.س")
+    df_raw = load_data(f_ledger)
+    
+    if df_raw is not None:
+        # تحويل المبالغ فوراً
+        df_raw['Dr'] = pd.to_numeric(df_raw['Dr'], errors='coerce').fillna(0)
+        df_raw['Cr'] = pd.to_numeric(df_raw['Cr'], errors='coerce').fillna(0)
+        
+        # خيار الفحص (عرض كل شيء للتأكد أن البرنامج يقرأ)
+        show_all = st.checkbox("🔍 عرض كافة الحسابات المكتشفة في الملف (للتأكد من القراءة)")
+        
+        # التجميع الأساسي لكل الحسابات
+        summary_all = df_raw.groupby('LedgerName').agg({
+            'Dr': 'sum', 
+            'Cr': 'sum',
+            'AcLedger': 'first'
+        }).reset_index()
+        summary_all['Balance'] = summary_all['Dr'] - summary_all['Cr']
 
-            st.divider()
-            st.subheader("📋 كشف الأرصدة التفصيلي")
-            st.dataframe(
-                final[['LedgerName', 'Balance']], 
-                column_config={"Balance": st.column_config.NumberColumn("الرصيد", format="%.2f")},
-                use_container_width=True, 
-                height=600
-            )
-            
-        except Exception as e:
-            st.error(f"خطأ أثناء معالجة البيانات: {e}")
+        if show_all:
+            st.subheader("📋 كافة الحسابات الموجودة في الملف")
+            st.dataframe(summary_all[['LedgerName', 'AcLedger', 'Balance']], use_container_width=True)
+
+        st.divider()
+
+        # --- فلترة الـ 40 عميل المستهدفين ---
+        # 1. استبعاد الحسابات البنكية والنقدية
+        exclude_list = ["مصرف الراجحي", "البنك الأهلي", "صندوق", "نقدية", "شبكة"]
+        
+        # 2. تطبيق فلترة الأكواد 113 و 221
+        final_debtors = summary_all[
+            (summary_all['AcLedger'].astype(str).str.startswith(('113', '221'))) & 
+            (~summary_all['LedgerName'].str.contains('|'.join(exclude_list), na=False)) &
+            (summary_all['Balance'] > 0.01)
+        ].sort_values('Balance', ascending=False)
+
+        # --- 5. عرض النتائج النهائية للمطابقة ---
+        current_total = final_debtors['Balance'].sum()
+        count_found = len(final_debtors)
+        
+        c1, c2 = st.columns(2)
+        c1.metric("إجمالي مديونية العملاء", f"{current_total:,.2f} ر.س")
+        c2.metric("عدد العملاء", f"{count_found}")
+        
+        target = 218789.96
+        if abs(current_total - target) < 1:
+            st.success(f"✅ مبروك! تم التطابق مع البرنامج: {target:,.2f} ر.س")
+        else:
+            st.warning(f"الفرق الحالي عن البرنامج: {target - current_total:,.2f} ر.س")
+
+        st.subheader("📋 القائمة النهائية (المطابقة للبرنامج)")
+        st.dataframe(
+            final_debtors[['LedgerName', 'Balance']], 
+            column_config={"Balance": st.column_config.NumberColumn("الرصيد", format="%.2f")},
+            use_container_width=True, 
+            height=600
+        )
 else:
-    st.warning("⚠️ الرجاء رفع ملف LedgerBook.xml للبدء.")
+    st.info("💡 الرجاء رفع ملف LedgerBook.xml للبدء.")
