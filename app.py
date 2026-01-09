@@ -27,7 +27,8 @@ def get_xml_df(file):
 # --- 3. القائمة الجانبية للرفع ---
 with st.sidebar:
     st.header("📂 استيراد البيانات")
-    f_ledger = st.file_uploader("ارفع ملف LedgerBook.xml", type=['xml'], key="ledger_input")
+    # استخدام مفتاح فريد لضمان عدم تداخل الذاكرة
+    f_ledger = st.file_uploader("ارفع ملف LedgerBook.xml", type=['xml'], key="ledger_final_input")
 
 # --- 4. المعالجة والمطابقة التامة ---
 if f_ledger:
@@ -70,7 +71,7 @@ if f_ledger:
             # التحقق من المطابقة (المستهدف 218,789.96)
             target = 218789.96
             if round(current_total, 2) == target:
-                st.success(f"✅ مبروك! تم التطابق التام مع تقرير البرنامج: {target:,.2f} ر.س")
+                st.success(f"✅ تم التطابق التام مع تقرير البرنامج: {target:,.2f} ر.س")
             else:
                 diff = target - current_total
                 st.warning(f"الفرق المتبقي للمطابقة: {diff:,.2f} ر.س")
