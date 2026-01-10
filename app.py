@@ -4,7 +4,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 
 # --- 1. إعدادات الصفحة والتنسيق البصري ---
-st.set_page_config(page_title="تحصيل شان - التحليل الموحد", layout="wide")
+st.set_page_config(page_title="تحصيل شان - التحليل الشامل", layout="wide")
 
 st.markdown("""
 <style>
@@ -35,6 +35,7 @@ st.markdown("""
     .aging-table th { background-color: #f1f3f5; color: #034275; }
     .val-outstanding { font-weight: bold; color: #d32f2f; font-size: 15px; }
     .val-activity { color: #555; font-size: 12px; }
+    .urgent-box { background:#fdf2f2; border: 1px solid #f5c6cb; padding:10px; border-radius:8px; text-align:center; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -46,11 +47,12 @@ def load_data(file):
     data = [{child.tag: child.text for child in row} for row in tree.getroot()]
     df = pd.DataFrame(data)
     df['Dr'] = pd.to_numeric(df['Dr'], errors='coerce').fillna(0)
-    df['Cr'] = pd.to_numeric(df['Cr'].str.replace(',', ''), errors='coerce').fillna(0) if df['Cr'].dtype == object else pd.to_numeric(df['Cr'], errors='coerce').fillna(0)
+    df['Cr'] = pd.to_numeric(df['Cr'], errors='coerce').fillna(0)
+    # تحويل التاريخ المعتمد للبرنامج
     df['Date'] = pd.to_datetime(pd.to_numeric(df['TransDateValue'], errors='coerce'), unit='D', origin='1899-12-30')
     return df
 
-# --- 3. قائمة الأسماء المختارة من ميزان المراجعة ---
+# --- 3. قائمة الأسماء المستهدفة ---
 target_names = [
     "شركة الريادة العربية التجارية", "شركة أصل الشرق لقطع غيار السيارات فرع 14", "شركة ركن الأمجاد المتحدة للتجارة",
     "شركة موجود المتحدة للتجارة", "مؤسسة وتين الغربية التجارية", "شركة بن شيهون البركة التجارية فرع 14",
@@ -68,7 +70,7 @@ target_names = [
     "شركة الإنجازات لتجارة الجملة و التجزئة", "منقذة لقطع غيار السيارات"
 ]
 
-# --- 4. واجهة المستخدم والمعالجة ---
+# --- 4. واجهة المستخدم ---
 with st.sidebar:
     st.header("📂 إدارة البيانات")
     f_ledger = st.file_uploader("ارفع ملف LedgerBook.xml", type=['xml'])
@@ -79,7 +81,7 @@ if f_ledger:
     df_filtered = df[df['LedgerName'].str.strip().isin([n.strip() for n in target_names])].copy()
 
     if not df_filtered.empty:
-        st.title("📇 سجل متابعة التحصيل (تحليل الفترات الموحد)")
+        st.title("📇 سجل متابعة التحصيل (التحليل الشامل)")
         
         index = 1
         for name in target_names:
@@ -89,7 +91,7 @@ if f_ledger:
             total_balance = c_data['Dr'].sum() - c_data['Cr'].sum()
             if total_balance <= 1: continue
 
-            # تعريف الفترات الزمنية
+            # تعريف الفترات
             periods = [
                 {"label": "0-30 يوم", "min": 0, "max": 30},
                 {"label": "31-60 يوم", "min": 31, "max": 60},
@@ -98,11 +100,9 @@ if f_ledger:
                 {"label": "+120 يوم", "min": 121, "max": 9999}
             ]
             
-            aging_results = []
-            temp_bal = total_balance
-            
-            # 1. حساب التعمير (Aging)
+            # 1. حساب المديونية المتبقية (Aging)
             out_vals = {p["label"]: 0 for p in periods}
+            temp_bal = total_balance
             for _, row in c_data[c_data['Dr'] > 0].iterrows():
                 if temp_bal <= 0: break
                 days = (today - row['Date']).days
@@ -113,18 +113,22 @@ if f_ledger:
                         break
                 temp_bal -= amt
 
-            # 2. حساب حركة النشاط (Activity) لكل فترة
+            # 2. تجميع النشاط (عدد وقيم)
+            aging_results = []
             for p in periods:
-                mask = ( (today - c_data['Date']).dt.days >= p["min"] ) & ( (today - c_data['Date']).dt.days <= p["max"] )
-                p_data = c_data[mask]
+                p_mask = ( (today - c_data['Date']).dt.days >= p["min"] ) & ( (today - c_data['Date']).dt.days <= p["max"] )
+                p_data = c_data[p_mask]
+                
                 aging_results.append({
                     "period": p["label"],
                     "outstanding": out_vals.get(p["label"], 0),
-                    "purchases": p_data['Dr'].sum(),
-                    "payments": p_data['Cr'].sum()
+                    "purch_val": p_data['Dr'].sum(),
+                    "purch_count": len(p_data[p_data['Dr'] > 0]),
+                    "pay_val": p_data['Cr'].sum(),
+                    "pay_count": len(p_data[p_data['Cr'] > 0])
                 })
 
-            # المبلغ المستحق (> 60 يوم)
+            # تصحيح حساب المستحق سداده (>60 يوم)
             overdue_60 = out_vals.get("61-90", 0) + out_vals.get("91-120", 0) + out_vals.get("+120", 0)
 
             # عرض البطاقة
@@ -134,14 +138,14 @@ if f_ledger:
                     <span style="font-size: 18px; font-weight: bold;">#{index} - {name}</span>
                     <span style="font-size: 15px;">إجمالي المديونية: {total_balance:,.2f} ر.س</span>
                 </div>
-                <div style="display: flex; gap: 20px; margin-bottom: 15px;">
-                    <div style="flex:1; background:#f8f9fa; padding:10px; border-radius:8px; border:1px solid #ddd; text-align:center;">
-                        <small>المستحق سداده (>60 يوم)</small><br><b style="color:#d32f2f; font-size:18px;">{overdue_60:,.2f}</b>
-                    </div>
+                <div class="urgent-box">
+                    <small style="color:#666;">المستحق سداده (أقدم من 60 يوم)</small><br>
+                    <b style="color:#d32f2f; font-size:22px;">{overdue_60:,.2f}</b>
                 </div>
+                <br>
                 <table class="aging-table">
                     <tr>
-                        <th style="width:200px;">البيان / الفترة</th>
+                        <th style="width:220px;">البيان / الفترة</th>
                         {" ".join([f"<th>{r['period']}</th>" for r in aging_results])}
                     </tr>
                     <tr>
@@ -149,12 +153,20 @@ if f_ledger:
                         {" ".join([f"<td class='val-outstanding'>{r['outstanding']:,.2f}</td>" for r in aging_results])}
                     </tr>
                     <tr>
-                        <td style="background:#f8f9fa;">إجمالي المشتريات (خلال الفترة)</td>
-                        {" ".join([f"<td class='val-activity'>{r['purchases']:,.0f}</td>" for r in aging_results])}
+                        <td style="background:#f8f9fa;">إجمالي المشتريات (قيمة)</td>
+                        {" ".join([f"<td class='val-activity'>{r['purch_val']:,.0f}</td>" for r in aging_results])}
                     </tr>
                     <tr>
-                        <td style="background:#f8f9fa;">إجمالي المسدد (خلال الفترة)</td>
-                        {" ".join([f"<td class='val-activity'>{r['payments']:,.0f}</td>" for r in aging_results])}
+                        <td style="background:#f8f9fa;">عدد الفواتير (شراء)</td>
+                        {" ".join([f"<td class='val-activity'>{r['purch_count']}</td>" for r in aging_results])}
+                    </tr>
+                    <tr>
+                        <td style="background:#f8f9fa;">إجمالي السداد (قيمة)</td>
+                        {" ".join([f"<td class='val-activity'>{r['pay_val']:,.0f}</td>" for r in aging_results])}
+                    </tr>
+                    <tr>
+                        <td style="background:#f8f9fa;">عدد السدادات (دفعات)</td>
+                        {" ".join([f"<td class='val-activity'>{r['pay_count']}</td>" for r in aging_results])}
                     </tr>
                 </table>
             </div>
