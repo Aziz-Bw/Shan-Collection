@@ -3,7 +3,7 @@ import pandas as pd
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 
-# --- 1. إعدادات الصفحة والتصميم الاحترافي ---
+# --- 1. إعدادات الصفحة والتصميم ---
 st.set_page_config(page_title="تحصيل شان - المحلل الذكي", layout="wide")
 
 st.markdown("""
@@ -18,19 +18,17 @@ st.markdown("""
         padding: 10px;
         border-radius: 10px;
         text-align: center;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
         height: 125px;
         display: flex;
         flex-direction: column;
         justify-content: center;
-        transition: transform 0.2s;
     }
-    .kpi-card:hover { transform: translateY(-5px); }
     .kpi-title { font-size: 12px; color: #666; margin-bottom: 5px; font-weight: bold; }
     .kpi-value { font-size: 19px; font-weight: bold; color: #034275; }
     .kpi-sub { font-size: 11px; color: #888; margin-top: 5px; }
     
-    /* بطاقة العميل */
+    /* بطاقة العميل الرئيسية */
     .main-card {
         border: 2px solid #034275;
         padding: 20px;
@@ -52,49 +50,39 @@ st.markdown("""
         font-size: 18px;
     }
     
-    /* التحليل الذكي (AI Box) */
+    /* صندوق الذكاء الاصطناعي */
     .ai-box {
-        background: linear-gradient(to left, #f8f9fa, #eef2f3);
-        border-right: 5px solid #6c5ce7;
+        background-color: #f3e5f5; /* لون بنفسجي فاتح جداً */
+        border-right: 5px solid #8e24aa;
         padding: 15px;
         border-radius: 8px;
         margin-bottom: 20px;
-        color: #2d3436;
+        color: #4a148c;
         font-size: 14px;
         line-height: 1.6;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.03);
-    }
-    .ai-title {
-        color: #6c5ce7;
-        font-weight: bold;
-        font-size: 15px;
-        margin-bottom: 8px;
-        display: flex;
-        align-items: center;
-        gap: 8px;
     }
     
+    /* صندوق الحالة (أحمر/أخضر) */
+    .urgent-box-red { 
+        background:#fdf2f2; border: 1px solid #f5c6cb; 
+        padding:10px; border-radius:8px; text-align:center; margin-bottom:15px;
+    }
+    .urgent-box-green { 
+        background:#f0f9f4; border: 1px solid #c3e6cb; 
+        padding:10px; border-radius:8px; text-align:center; margin-bottom:15px;
+    }
+    
+    /* الجدول */
     .aging-table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
     .aging-table th, .aging-table td { 
         border: 1px solid #eee; padding: 10px; text-align: center; font-size: 13px;
     }
     .aging-table th { background-color: #f1f3f5; color: #034275; }
     .val-outstanding { font-weight: bold; color: #d32f2f; font-size: 15px; }
-    .val-activity { color: #555; font-size: 12px; }
-    
-    /* صناديق الحالة */
-    .urgent-box-red { 
-        background:#fdf2f2; border: 1px solid #f5c6cb; 
-        padding:15px; border-radius:8px; text-align:center; margin-bottom:20px;
-    }
-    .urgent-box-green { 
-        background:#f0f9f4; border: 1px solid #c3e6cb; 
-        padding:15px; border-radius:8px; text-align:center; margin-bottom:20px;
-    }
 </style>
 """, unsafe_allow_html=True)
 
-# --- 2. دالة القراءة وفلترة المرتجعات ---
+# --- 2. دالة القراءة (مع فلتر المرتجعات) ---
 def load_data(file):
     if file is None: return None
     file.seek(0)
@@ -163,6 +151,7 @@ if f_ledger:
                 global_overdue_amt += c_overdue
                 global_overdue_count += 1
 
+        # حسابات الكاش للأيام والشهور
         offset_to_sat = (today.weekday() + 2) % 7
         last_sat = today - timedelta(days=offset_to_sat)
         weeks_kpi = []
@@ -184,6 +173,7 @@ if f_ledger:
         avg_weekly = (total_cash_only / days_active) * 7
         avg_monthly = (total_cash_only / days_active) * 30
 
+        # --- عرض اللوحة العلوية ---
         st.markdown("### 📊 مركز قيادة التحصيل (صافي النقدية)")
         c1, c2, c3 = st.columns(3)
         with c1: st.markdown(f'<div class="kpi-card"><div class="kpi-title">المستحق سداده (>60 يوم)</div><div class="kpi-value" style="color:#c0392b;">{global_overdue_amt:,.0f}</div><div class="kpi-sub">{global_overdue_count} عملاء متأخرين</div></div>', unsafe_allow_html=True)
@@ -192,6 +182,7 @@ if f_ledger:
 
         st.markdown("---")
         st.caption("📅 أداء الشهور والأسابيع")
+        
         m1, m2, m3, w1, w2, w3, w4 = st.columns(7)
         with m1: st.markdown(f'<div class="kpi-card"><div class="kpi-title">{months_kpi[0]["name"]}</div><div class="kpi-value" style="font-size:16px">{months_kpi[0]["val"]:,.0f}</div></div>', unsafe_allow_html=True)
         with m2: st.markdown(f'<div class="kpi-card"><div class="kpi-title">{months_kpi[1]["name"]}</div><div class="kpi-value" style="font-size:16px">{months_kpi[1]["val"]:,.0f}</div></div>', unsafe_allow_html=True)
@@ -213,7 +204,6 @@ if f_ledger:
             total_balance = c_data['Dr'].sum() - c_data['Cr'].sum()
             if total_balance <= 1: continue
 
-            # تحليل الفترات
             periods = [
                 {"key": "P0", "label": "0-30 يوم", "min": 0, "max": 30},
                 {"key": "P30", "label": "31-60 يوم", "min": 31, "max": 60},
@@ -236,30 +226,26 @@ if f_ledger:
 
             overdue_60_card = out_vals["P60"] + out_vals["P90"] + out_vals["P120"]
             
-            # --- 🤖 التحليل الذكي (AI Logic) ---
-            # 1. تحديد آخر عملية شراء
+            # --- منطق الذكاء الاصطناعي (AI Logic) ---
             last_purchase = c_data[c_data['Dr'] > 0]['Date'].max()
-            days_since_purchase = (today - last_purchase).days if pd.notna(last_purchase) else 999
+            days_inactive = (today - last_purchase).days if pd.notna(last_purchase) else 999
             
-            # 2. تحليل نسبة السداد للمشتريات (آخر 90 يوم)
-            recent_90 = c_data[c_data['Date'] >= (today - timedelta(days=90))]
-            purch_90 = recent_90['Dr'].sum()
-            pay_90 = recent_90['Cr'].sum()
+            recent_purch = c_data[c_data['Date'] > (today - timedelta(days=90))]['Dr'].sum()
+            recent_pay = c_data[c_data['Date'] > (today - timedelta(days=90))]['Cr'].sum()
             
-            ai_recommendation = ""
-            
+            ai_msg = ""
             if overdue_60_card > 0:
-                ai_recommendation = f"⛔ **إجراء حاسم:** العميل لديه مبالغ متأخرة ({overdue_60_card:,.0f} ر.س). **يجب إيقاف البيع الآجل فوراً** والمطالبة بسداد القديم قبل أي توريد جديد. الهدف: تصفية الـ 60 يوم."
-            elif days_since_purchase > 45:
-                ai_recommendation = f"⚠️ **عميل منقطع:** لم يطلب بضاعة منذ {days_since_purchase} يوم. يوصى بالتواصل معه لإغلاق الحساب أو معرفة سبب التوقف."
-            elif purch_90 > (pay_90 * 1.5) and total_balance > 5000:
-                ai_recommendation = f"📉 **تضخم المديونية:** العميل يسحب أكثر مما يسدد (نسبة السداد {pay_90/purch_90*100:.0f}% فقط). يوصى بطلب **سداد 50% من قيمة أي فاتورة جديدة** نقداً للسيطرة على الرصيد."
-            elif purch_90 > 0 and pay_90 < (purch_90 * 0.8):
-                ai_recommendation = "💡 **تحسين السداد:** العميل نشط لكن سداده بطيء. يُنصح بالضغط لزيادة الدفعات الأسبوعية لتغطية المسحوبات الجديدة."
+                ai_msg = f"⛔ **إجراء حاسم:** العميل لديه مبالغ متأخرة ({overdue_60_card:,.0f} ر.س). يجب إيقاف البيع الآجل فوراً والمطالبة بسداد القديم."
+            elif days_inactive > 45:
+                ai_msg = f"⚠️ **عميل منقطع:** لم يطلب بضاعة منذ {days_inactive} يوم. يوصى بالتواصل معه."
+            elif recent_purch > (recent_pay * 1.5) and total_balance > 5000:
+                ai_msg = "📉 **تضخم المديونية:** العميل يسحب أكثر مما يسدد. يوصى بطلب سداد 50% من الفاتورة الجديدة نقداً."
+            elif recent_pay < (recent_purch * 0.8) and recent_purch > 0:
+                ai_msg = "💡 **تحسين السداد:** العميل نشط لكن سداده بطيء. يُنصح بالضغط لزيادة الدفعات."
             else:
-                ai_recommendation = "✅ **وضع جيد:** العميل منتظم في السداد ولا توجد متأخرات حرجة. استمر في المتابعة الدورية."
+                ai_msg = "✅ **وضع جيد:** العميل منتظم في السداد. استمر في المتابعة."
 
-            # تحديد نمط الصندوق (أحمر/أخضر)
+            # تحديد نمط الصندوق
             if overdue_60_card > 1:
                 status_class = "urgent-box-red"
                 status_text = f"<small style='color:#666;'>المستحق سداده (أقدم من 60 يوم)</small><br><b style='color:#d32f2f; font-size:24px;'>{overdue_60_card:,.2f}</b>"
@@ -288,8 +274,7 @@ if f_ledger:
                 </div>
                 
                 <div class="ai-box">
-                    <div class="ai-title">🤖 توصية المحلل الذكي:</div>
-                    {ai_recommendation}
+                    <strong>🤖 توصية المحلل الذكي:</strong><br>{ai_msg}
                 </div>
 
                 <div class="{status_class}">
