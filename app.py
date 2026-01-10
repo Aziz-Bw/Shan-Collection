@@ -46,12 +46,11 @@ def load_data(file):
     data = [{child.tag: child.text for child in row} for row in tree.getroot()]
     df = pd.DataFrame(data)
     df['Dr'] = pd.to_numeric(df['Dr'], errors='coerce').fillna(0)
-    df['Cr'] = pd.to_numeric(df['Cr'], errors='coerce').fillna(0)
-    # تحويل تاريخ البرنامج المعتمد
+    df['Cr'] = pd.to_numeric(df['Cr'].str.replace(',', ''), errors='coerce').fillna(0) if df['Cr'].dtype == object else pd.to_numeric(df['Cr'], errors='coerce').fillna(0)
     df['Date'] = pd.to_datetime(pd.to_numeric(df['TransDateValue'], errors='coerce'), unit='D', origin='1899-12-30')
     return df
 
-# --- 3. قائمة الأسماء المعتمدة من ميزان المراجعة ---
+# --- 3. قائمة الأسماء المختارة من ميزان المراجعة ---
 target_names = [
     "شركة الريادة العربية التجارية", "شركة أصل الشرق لقطع غيار السيارات فرع 14", "شركة ركن الأمجاد المتحدة للتجارة",
     "شركة موجود المتحدة للتجارة", "مؤسسة وتين الغربية التجارية", "شركة بن شيهون البركة التجارية فرع 14",
@@ -90,7 +89,7 @@ if f_ledger:
             total_balance = c_data['Dr'].sum() - c_data['Cr'].sum()
             if total_balance <= 1: continue
 
-            # تعريف الفترات الزمنية الموحدة
+            # تعريف الفترات الزمنية
             periods = [
                 {"label": "0-30 يوم", "min": 0, "max": 30},
                 {"label": "31-60 يوم", "min": 31, "max": 60},
@@ -102,7 +101,7 @@ if f_ledger:
             aging_results = []
             temp_bal = total_balance
             
-            # 1. حساب المديونية المتبقية (Outstanding) بناءً على الفواتير
+            # 1. حساب التعمير (Aging)
             out_vals = {p["label"]: 0 for p in periods}
             for _, row in c_data[c_data['Dr'] > 0].iterrows():
                 if temp_bal <= 0: break
@@ -114,7 +113,7 @@ if f_ledger:
                         break
                 temp_bal -= amt
 
-            # 2. حساب حركة المشتريات والسداد الفعلية داخل كل فترة
+            # 2. حساب حركة النشاط (Activity) لكل فترة
             for p in periods:
                 mask = ( (today - c_data['Date']).dt.days >= p["min"] ) & ( (today - c_data['Date']).dt.days <= p["max"] )
                 p_data = c_data[mask]
@@ -125,10 +124,10 @@ if f_ledger:
                     "payments": p_data['Cr'].sum()
                 })
 
-            # المبلغ المستحق سداده (أكثر من 60 يوم)
-            overdue_60 = out_vals["61-90"] + out_vals["91-120"] + out_vals["+120"]
+            # المبلغ المستحق (> 60 يوم)
+            overdue_60 = out_vals.get("61-90", 0) + out_vals.get("91-120", 0) + out_vals.get("+120", 0)
 
-            # عرض بطاقة العميل الموحدة
+            # عرض البطاقة
             st.markdown(f"""
             <div class="main-card">
                 <div class="customer-header">
@@ -137,7 +136,7 @@ if f_ledger:
                 </div>
                 <div style="display: flex; gap: 20px; margin-bottom: 15px;">
                     <div style="flex:1; background:#f8f9fa; padding:10px; border-radius:8px; border:1px solid #ddd; text-align:center;">
-                        <small>المبلغ المستحق (>60 يوم)</small><br><b style="color:#d32f2f; font-size:18px;">{overdue_60:,.2f}</b>
+                        <small>المستحق سداده (>60 يوم)</small><br><b style="color:#d32f2f; font-size:18px;">{overdue_60:,.2f}</b>
                     </div>
                 </div>
                 <table class="aging-table">
@@ -163,5 +162,3 @@ if f_ledger:
             index += 1
     else:
         st.warning("يرجى رفع الملف لعرض البيانات.")
-else:
-    st.info("💡 ارفع ملف LedgerBook.xml لعرض تقرير التحصيل الموحد.")
