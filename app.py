@@ -4,7 +4,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 
 # --- 1. إعدادات الصفحة والتنسيق ---
-st.set_page_config(page_title="تحصيل شان - بطاقات العملاء", layout="wide")
+st.set_page_config(page_title="تحصيل شان - التحليل الموحد", layout="wide")
 
 st.markdown("""
 <style>
@@ -12,39 +12,32 @@ st.markdown("""
     html, body, [class*="css"] { font-family: 'Tajawal', sans-serif; direction: rtl; }
     .main-card {
         border: 2px solid #034275;
-        padding: 25px;
-        border-radius: 15px;
-        margin-bottom: 35px;
+        padding: 20px;
+        border-radius: 12px;
+        margin-bottom: 30px;
         background-color: #ffffff;
-        box-shadow: 5px 5px 15px rgba(0,0,0,0.1);
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
     }
     .customer-header {
         background-color: #034275;
         color: white;
-        padding: 10px 20px;
-        border-radius: 10px;
-        margin-bottom: 20px;
+        padding: 12px 20px;
+        border-radius: 8px;
+        margin-bottom: 15px;
         display: flex;
         justify-content: space-between;
-        align-items: center;
     }
-    .metric-box {
-        background: #f0f2f6;
-        padding: 15px;
-        border-radius: 10px;
-        text-align: center;
-        border: 1px solid #ddd;
-    }
-    .aging-table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+    .aging-table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
     .aging-table th, .aging-table td { 
-        border: 1px solid #ddd; padding: 8px; text-align: center; font-size: 14px;
+        border: 1px solid #eee; padding: 10px; text-align: center; font-size: 13px;
     }
-    .aging-table th { background-color: #f8f9fa; }
-    .urgent-payment { color: #d32f2f; font-weight: bold; font-size: 18px; }
+    .aging-table th { background-color: #f1f3f5; color: #034275; }
+    .val-outstanding { font-weight: bold; color: #d32f2f; font-size: 15px; }
+    .val-activity { color: #555; font-size: 12px; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- 2. الدوال الأساسية ---
+# --- 2. دالة القراءة ---
 def load_data(file):
     if file is None: return None
     file.seek(0)
@@ -56,7 +49,7 @@ def load_data(file):
     df['Date'] = pd.to_datetime(pd.to_numeric(df['TransDateValue'], errors='coerce'), unit='D', origin='1899-12-30')
     return df
 
-# --- 3. القائمة الجانبية والقائمة المعتمدة ---
+# --- 3. القائمة الجانبية ---
 with st.sidebar:
     st.header("📂 إدارة البيانات")
     f_ledger = st.file_uploader("ارفع ملف LedgerBook.xml", type=['xml'])
@@ -77,79 +70,92 @@ with st.sidebar:
         "شركة الإنجازات لتجارة الجملة و التجزئة", "منقذة لقطع غيار السيارات"
     ]
 
-# --- 4. المعالجة والعرض ---
+# --- 4. المعالجة والعرض الموحد ---
 if f_ledger:
     df = load_data(f_ledger)
     today = datetime.now()
     df_filtered = df[df['LedgerName'].str.strip().isin([n.strip() for n in target_names])].copy()
 
     if not df_filtered.empty:
-        st.title("📇 سجل متابعة مديونيات العملاء")
+        st.title("📇 سجل متابعة التحصيل (تحليل الفترات الموحد)")
         
         index = 1
         for name in target_names:
             c_data = df_filtered[df_filtered['LedgerName'] == name].sort_values('Date', ascending=False)
             if c_data.empty: continue
             
-            balance = c_data['Dr'].sum() - c_data['Cr'].sum()
-            if balance <= 1: continue
+            total_balance = c_data['Dr'].sum() - c_data['Cr'].sum()
+            if total_balance <= 1: continue
 
-            # حساب تعمير الديون (Aging)
-            aging = {"0-30": 0, "31-60": 0, "61-90": 0, "91-120": 0, "+120": 0}
-            temp_bal = balance
+            # تحليل الفترات (Aging + Activity)
+            periods = [
+                {"label": "0-30 يوم", "min": 0, "max": 30},
+                {"label": "31-60 يوم", "min": 31, "max": 60},
+                {"label": "61-90 يوم", "min": 61, "max": 90},
+                {"label": "91-120 يوم", "min": 91, "max": 120},
+                {"label": "+120 يوم", "min": 121, "max": 9999}
+            ]
+            
+            aging_results = []
+            temp_bal = total_balance
+            
+            # حساب المديونية المتبقية (Outstanding) حسب تاريخ الفواتير
+            out_vals = {p["label"]: 0 for p in periods}
             for _, row in c_data[c_data['Dr'] > 0].iterrows():
                 if temp_bal <= 0: break
                 days = (today - row['Date']).days
                 amt = min(row['Dr'], temp_bal)
-                if days <= 30: aging["0-30"] += amt
-                elif days <= 60: aging["31-60"] += amt
-                elif days <= 90: aging["61-90"] += amt
-                elif days <= 120: aging["91-120"] += amt
-                else: aging["+120"] += amt
+                for p in periods:
+                    if days >= p["min"] and days <= p["max"]:
+                        out_vals[p["label"]] += amt
+                        break
                 temp_bal -= amt
-            
-            # المبلغ المستحق (أكثر من 60 يوم)
-            overdue_60 = aging["61-90"] + aging["91-120"] + aging["+120"]
 
-            # عرض البطاقة مع الحدود (Border)
+            # حساب حركة المشتريات والسداد (Activity) التي تمت في كل فترة
+            for p in periods:
+                mask = ( (today - c_data['Date']).dt.days >= p["min"] ) & ( (today - c_data['Date']).dt.days <= p["max"] )
+                p_data = c_data[mask]
+                aging_results.append({
+                    "period": p["label"],
+                    "outstanding": out_vals[p["label"]],
+                    "purchases": p_data['Dr'].sum(),
+                    "payments": p_data['Cr'].sum()
+                })
+
+            overdue_60 = out_vals["61-90"] + out_vals["91-120"] + out_vals["+120"]
+
+            # عرض بطاقة العميل الموحدة
             st.markdown(f"""
             <div class="main-card">
                 <div class="customer-header">
-                    <span style="font-size: 20px; font-weight: bold;">#{index} - {name}</span>
-                    <span style="font-size: 16px;">إجمالي المديونية: {balance:,.2f} ر.س</span>
+                    <span style="font-size: 18px; font-weight: bold;">#{index} - {name}</span>
+                    <span style="font-size: 15px;">إجمالي المديونية: {total_balance:,.2f} ر.س</span>
                 </div>
+                <div style="display: flex; gap: 20px; margin-bottom: 15px;">
+                    <div style="flex:1; background:#f8f9fa; padding:10px; border-radius:8px; border:1px solid #ddd; text-align:center;">
+                        <small>المبلغ المستحق (>60 يوم)</small><br><b style="color:#d32f2f; font-size:18px;">{overdue_60:,.2f}</b>
+                    </div>
+                </div>
+                <table class="aging-table">
+                    <tr>
+                        <th>الفترة الزمنية</th>
+                        {" ".join([f"<th>{r['period']}</th>" for r in aging_results])}
+                    </tr>
+                    <tr>
+                        <td style="background:#f8f9fa; font-weight:bold;">المديونية المتبقية حالياً</td>
+                        {" ".join([f"<td class='val-outstanding'>{r['outstanding']:,.2f}</td>" for r in aging_results])}
+                    </tr>
+                    <tr>
+                        <td style="background:#f8f9fa;">إجمالي المشتريات (خلال الفترة)</td>
+                        {" ".join([f"<td class='val-activity'>{r['purchases']:,.0f}</td>" for r in aging_results])}
+                    </tr>
+                    <tr>
+                        <td style="background:#f8f9fa;">إجمالي المسدد (خلال الفترة)</td>
+                        {" ".join([f"<td class='val-activity'>{r['payments']:,.0f}</td>" for r in aging_results])}
+                    </tr>
+                </table>
+            </div>
             """, unsafe_allow_html=True)
-            
-            col_m1, col_m2 = st.columns(2)
-            col_m1.markdown(f'<div class="metric-box"><b>إجمالي الرصيد</b><br><span style="font-size:20px; color:#034275;">{balance:,.2f}</span></div>', unsafe_allow_html=True)
-            col_m2.markdown(f'<div class="metric-box"><b>المستحق سداده (>60 يوم)</b><br><span class="urgent-payment">{overdue_60:,.2f}</span></div>', unsafe_allow_html=True)
-
-            st.write("#### 📊 تعمير الديون (Aging)")
-            st.markdown(f"""
-            <table class="aging-table">
-                <tr><th>0-30 يوم</th><th>31-60 يوم</th><th>61-90 يوم</th><th>91-120 يوم</th><th>+120 يوم</th></tr>
-                <tr>
-                    <td>{aging['0-30']:,.2f}</td><td>{aging['31-60']:,.2f}</td>
-                    <td style="background:#fff3f3;">{aging['61-90']:,.2f}</td>
-                    <td style="background:#fff3f3;">{aging['91-120']:,.2f}</td>
-                    <td style="background:#fff3f3;">{aging['+120']:,.2f}</td>
-                </tr>
-            </table>
-            """, unsafe_allow_html=True)
-
-            st.write("#### 📈 تحليل النشاط (آخر 3 أشهر)")
-            stats_cols = st.columns(3)
-            for i in range(3):
-                m_date = (today.replace(day=1) - timedelta(days=i*30))
-                m_data = c_data[(c_data['Date'].dt.month == m_date.month) & (c_data['Date'].dt.year == m_date.year)]
-                buy_val = m_data['Dr'].sum()
-                pay_val = m_data['Cr'].sum()
-                with stats_cols[i]:
-                    st.info(f"**{m_date.strftime('%m-%Y')}**")
-                    st.write(f"🛒 فواتير: {len(m_data[m_data['Dr']>0])} | {buy_val:,.0f} ر.س")
-                    st.write(f"💰 دفعات: {len(m_data[m_data['Cr']>0])} | {pay_val:,.0f} ر.س")
-            
-            st.markdown("</div>", unsafe_allow_html=True)
             index += 1
     else:
-        st.warning("ارفع الملف لعرض البيانات.")
+        st.warning("يرجى رفع الملف لعرض البيانات.")
