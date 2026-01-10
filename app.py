@@ -4,7 +4,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 
 # --- 1. إعدادات الصفحة والتنسيق ---
-st.set_page_config(page_title="تحصيل شان - لوحة القيادة", layout="wide")
+st.set_page_config(page_title="تحصيل شان - مركز القيادة", layout="wide")
 
 st.markdown("""
 <style>
@@ -15,17 +15,18 @@ st.markdown("""
     .kpi-card {
         background-color: #ffffff;
         border: 1px solid #e0e0e0;
-        padding: 15px;
-        border-radius: 10px;
+        padding: 10px;
+        border-radius: 8px;
         text-align: center;
         box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-        height: 120px;
         display: flex;
         flex-direction: column;
         justify-content: center;
+        margin-bottom: 10px;
     }
-    .kpi-title { font-size: 13px; color: #666; margin-bottom: 5px; font-weight: bold; }
-    .kpi-value { font-size: 19px; font-weight: bold; color: #034275; }
+    .kpi-title { font-size: 12px; color: #666; margin-bottom: 3px; font-weight: bold; }
+    .kpi-value { font-size: 17px; font-weight: bold; color: #034275; }
+    .kpi-sub { font-size: 10px; color: #888; }
     
     /* بطاقة العميل */
     .main-card {
@@ -97,13 +98,12 @@ if f_ledger:
 
     if not df_filtered.empty:
         # --- حساب التحليلات العلوية ---
+        
+        # 1. الديون المتأخرة
         global_overdue_amt = 0
         global_overdue_count = 0
-        
-        # 1. حساب الديون المتأخرة للإحصائية العلوية
         for name in target_names:
             c_data = df_filtered[df_filtered['LedgerName'] == name]
-            if c_data.empty: continue
             balance = c_data['Dr'].sum() - c_data['Cr'].sum()
             if balance <= 1: continue
             
@@ -115,12 +115,11 @@ if f_ledger:
                 amt = min(row['Dr'], temp_bal)
                 if days > 60: c_overdue += amt
                 temp_bal -= amt
-            
             if c_overdue > 1:
                 global_overdue_amt += c_overdue
                 global_overdue_count += 1
 
-        # 2. حساب تحصيل الـ 4 أسابيع الماضية (أحد - سبت)
+        # 2. تحصيل آخر 4 أسابيع (أحد - سبت)
         offset_to_sat = (today.weekday() + 2) % 7
         last_sat = today - timedelta(days=offset_to_sat)
         weeks_kpi = []
@@ -128,30 +127,51 @@ if f_ledger:
             end_date = last_sat - timedelta(weeks=i)
             start_date = end_date - timedelta(days=6)
             mask = (df_filtered['Date'].dt.date >= start_date.date()) & (df_filtered['Date'].dt.date <= end_date.date())
-            week_cr = df_filtered[mask]['Cr'].sum()
-            weeks_kpi.append({"label": f"الأسبوع {4-i}", "val": week_cr, "range": f"{start_date.strftime('%d/%m')} - {end_date.strftime('%d/%m')}"})
-        weeks_kpi.reverse() # عرض من الأقدم للأحدث
+            weeks_kpi.append({"val": df_filtered[mask]['Cr'].sum(), "range": f"{start_date.strftime('%d/%m')} - {end_date.strftime('%d/%m')}"})
+        weeks_kpi.reverse()
 
-        # 3. المتوسطات
-        total_collections = df_filtered['Cr'].sum()
-        first_tx = df_filtered['Date'].min()
-        days_active = max((today - first_tx).days, 1)
-        avg_weekly = (total_collections / days_active) * 7
-        avg_monthly = (total_collections / days_active) * 30
+        # 3. تحصيل آخر 3 أشهر (من بداية الشهر لنهايته)
+        months_kpi = []
+        for i in range(3):
+            # تحديد الشهر
+            first_day_of_curr_month = today.replace(day=1)
+            target_date = first_day_of_curr_month - timedelta(days=i*30) # تقريبي للوصول للشهر
+            m_month = target_date.month
+            m_year = target_date.year
+            m_name = target_date.strftime('%B')
+            
+            mask = (df_filtered['Date'].dt.month == m_month) & (df_filtered['Date'].dt.year == m_year)
+            months_kpi.append({"name": m_name, "val": df_filtered[mask]['Cr'].sum()})
 
-        # --- عرض بطاقات KPI ---
-        st.markdown("### 📊 ملخص التحصيل والديون")
-        k1, k2, k3, k4, k5, k6 = st.columns(6)
+        # 4. المتوسطات
+        days_active = max((today - df_filtered['Date'].min()).days, 1)
+        avg_weekly = (df_filtered['Cr'].sum() / days_active) * 7
+        avg_monthly = (df_filtered['Cr'].sum() / days_active) * 30
+
+        # --- عرض بطاقات KPI (في 3 صفوف) ---
+        st.markdown("### 📊 لوحة مراقبة التحصيل")
         
-        with k1:
-            st.markdown(f'<div class="kpi-card"><div class="kpi-title">المستحق (>60 يوم)</div><div class="kpi-value">{global_overdue_amt:,.0f}</div><div style="font-size:11px; color:red;">{global_overdue_count} عملاء متأخرين</div></div>', unsafe_allow_html=True)
-        
+        # الصف الأول: المتأخرات والمتوسطات
+        r1c1, r1c2, r1c3 = st.columns(3)
+        with r1c1: st.markdown(f'<div class="kpi-card"><div class="kpi-title">المستحق (>60 يوم)</div><div class="kpi-value" style="color:red;">{global_overdue_amt:,.0f}</div><div class="kpi-sub">{global_overdue_count} عملاء متأخرين</div></div>', unsafe_allow_html=True)
+        with r1c2: st.markdown(f'<div class="kpi-card"><div class="kpi-title">متوسط التحصيل الأسبوعي</div><div class="kpi-value">{avg_weekly:,.0f}</div></div>', unsafe_allow_html=True)
+        with r1c3: st.markdown(f'<div class="kpi-card"><div class="kpi-title">متوسط التحصيل الشهري</div><div class="kpi-value">{avg_monthly:,.0f}</div></div>', unsafe_allow_html=True)
+
+        # الصف الثاني: تحصيل الشهور (لآخر 3 أشهر)
+        st.markdown("---")
+        st.caption("💰 إجمالي تحصيل الشهور")
+        r2c1, r2c2, r2c3 = st.columns(3)
+        with r2c1: st.markdown(f'<div class="kpi-card"><div class="kpi-title">تحصيل الشهر الحالي ({months_kpi[0]["name"]})</div><div class="kpi-value">{months_kpi[0]["val"]:,.0f}</div></div>', unsafe_allow_html=True)
+        with r2c2: st.markdown(f'<div class="kpi-card"><div class="kpi-title">تحصيل الشهر السابق ({months_kpi[1]["name"]})</div><div class="kpi-value">{months_kpi[1]["val"]:,.0f}</div></div>', unsafe_allow_html=True)
+        with r2c3: st.markdown(f'<div class="kpi-card"><div class="kpi-title">تحصيل ما قبل السابق ({months_kpi[2]["name"]})</div><div class="kpi-value">{months_kpi[2]["val"]:,.0f}</div></div>', unsafe_allow_html=True)
+
+        # الصف الثالث: تحصيل الأسابيع (لآخر 4 أسابيع)
+        st.markdown("---")
+        st.caption("📅 تحصيل الأسابيع (أحد - سبت)")
+        r3c1, r3c2, r3c3, r3c4 = st.columns(4)
         for i, week in enumerate(weeks_kpi):
-            with [k2, k3, k4, k5][i]:
-                st.markdown(f'<div class="kpi-card"><div class="kpi-title">تحصيل {week["label"]}<br><small>{week["range"]}</small></div><div class="kpi-value">{week["val"]:,.0f}</div></div>', unsafe_allow_html=True)
-        
-        with k6:
-            st.markdown(f'<div class="kpi-card"><div class="kpi-title">متوسط التحصيل العام</div><div style="font-size:13px; font-weight:bold; color:#27ae60;">أسبوعي: {avg_weekly:,.0f}</div><div style="font-size:13px; font-weight:bold; color:#27ae60;">شهري: {avg_monthly:,.0f}</div></div>', unsafe_allow_html=True)
+            with [r3c1, r3c2, r3c3, r3c4][i]:
+                st.markdown(f'<div class="kpi-card"><div class="kpi-title">الأسبوع {i+1}</div><div class="kpi-value">{week["val"]:,.0f}</div><div class="kpi-sub">{week["range"]}</div></div>', unsafe_allow_html=True)
 
         st.divider()
 
@@ -161,19 +181,10 @@ if f_ledger:
         for name in target_names:
             c_data = df_filtered[df_filtered['LedgerName'] == name].sort_values('Date', ascending=False)
             if c_data.empty: continue
-            
             total_balance = c_data['Dr'].sum() - c_data['Cr'].sum()
             if total_balance <= 1: continue
 
-            # تحليل فترات التعمير والنشاط
-            periods = [
-                {"key": "P0", "label": "0-30 يوم", "min": 0, "max": 30},
-                {"key": "P30", "label": "31-60 يوم", "min": 31, "max": 60},
-                {"key": "P60", "label": "61-90 يوم", "min": 61, "max": 90},
-                {"key": "P90", "label": "91-120 يوم", "min": 91, "max": 120},
-                {"key": "P120", "label": "+120 يوم", "min": 121, "max": 9999}
-            ]
-            
+            periods = [{"key": "P0", "label": "0-30 يوم", "min": 0, "max": 30}, {"key": "P30", "label": "31-60 يوم", "min": 31, "max": 60}, {"key": "P60", "label": "61-90 يوم", "min": 61, "max": 90}, {"key": "P90", "label": "91-120 يوم", "min": 91, "max": 120}, {"key": "P120", "label": "+120 يوم", "min": 121, "max": 9999}]
             out_vals = {p["key"]: 0 for p in periods}
             temp_bal = total_balance
             for _, row in c_data[c_data['Dr'] > 0].iterrows():
@@ -195,37 +206,18 @@ if f_ledger:
                     <span>إجمالي المديونية: {total_balance:,.2f} ر.س</span>
                 </div>
                 <div class="urgent-box">
-                    <small>المستحق سداده (أقدم من 60 يوم)</small><br>
-                    <b style="color:#d32f2f; font-size:24px;">{overdue_60_card:,.2f}</b>
+                    <small>المستحق سداده (>60 يوم)</small><br><b style="color:#d32f2f; font-size:24px;">{overdue_60_card:,.2f}</b>
                 </div>
                 <table class="aging-table">
-                    <tr>
-                        <th style="width:200px;">البيان / الفترة</th>
-                        {" ".join([f"<th>{p['label']}</th>" for p in periods])}
-                    </tr>
-                    <tr>
-                        <td style="background:#f8f9fa; font-weight:bold;">المديونية المتبقية (Aging)</td>
-                        {" ".join([f"<td class='val-outstanding'>{out_vals[p['key']]:,.2f}</td>" for p in periods])}
-                    </tr>
-                    <tr>
-                        <td style="background:#f8f9fa;">إجمالي المشتريات (قيمة)</td>
-                        {" ".join([f"<td>{c_data[((today-c_data['Date']).dt.days>=p['min'])&((today-c_data['Date']).dt.days<=p['max'])]['Dr'].sum():,.0f}</td>" for p in periods])}
-                    </tr>
-                    <tr>
-                        <td style="background:#f8f9fa;">عدد الفواتير (شراء)</td>
-                        {" ".join([f"<td>{len(c_data[((today-c_data['Date']).dt.days>=p['min'])&((today-c_data['Date']).dt.days<=p['max'])&(c_data['Dr']>0)])}</td>" for p in periods])}
-                    </tr>
-                    <tr>
-                        <td style="background:#f8f9fa;">إجمالي السداد (قيمة)</td>
-                        {" ".join([f"<td>{c_data[((today-c_data['Date']).dt.days>=p['min'])&((today-c_data['Date']).dt.days<=p['max'])]['Cr'].sum():,.0f}</td>" for p in periods])}
-                    </tr>
-                    <tr>
-                        <td style="background:#f8f9fa;">عدد السدادات (دفعات)</td>
-                        {" ".join([f"<td>{len(c_data[((today-c_data['Date']).dt.days>=p['min'])&((today-c_data['Date']).dt.days<=p['max'])&(c_data['Cr']>0)])}</td>" for p in periods])}
-                    </tr>
+                    <tr><th>البيان / الفترة</th>{" ".join([f"<th>{p['label']}</th>" for p in periods])}</tr>
+                    <tr><td style="background:#f8f9fa; font-weight:bold;">المديونية (Aging)</td>{" ".join([f"<td class='val-outstanding'>{out_vals[p['key']]:,.2f}</td>" for p in periods])}</tr>
+                    <tr><td style="background:#f8f9fa;">المشتريات (قيمة)</td>{" ".join([f"<td>{c_data[((today-c_data['Date']).dt.days>=p['min'])&((today-c_data['Date']).dt.days<=p['max'])]['Dr'].sum():,.0f}</td>" for p in periods])}</tr>
+                    <tr><td style="background:#f8f9fa;">الفواتير (عدد)</td>{" ".join([f"<td>{len(c_data[((today-c_data['Date']).dt.days>=p['min'])&((today-c_data['Date']).dt.days<=p['max'])&(c_data['Dr']>0)])}</td>" for p in periods])}</tr>
+                    <tr><td style="background:#f8f9fa;">السداد (قيمة)</td>{" ".join([f"<td>{c_data[((today-c_data['Date']).dt.days>=p['min'])&((today-c_data['Date']).dt.days<=p['max'])]['Cr'].sum():,.0f}</td>" for p in periods])}</tr>
+                    <tr><td style="background:#f8f9fa;">الدفعات (عدد)</td>{" ".join([f"<td>{len(c_data[((today-c_data['Date']).dt.days>=p['min'])&((today-c_data['Date']).dt.days<=p['max'])&(c_data['Cr']>0)])}</td>" for p in periods])}</tr>
                 </table>
             </div>
             """, unsafe_allow_html=True)
             index += 1
 else:
-    st.info("💡 ارفع ملف LedgerBook.xml لعرض لوحة التحكم الكاملة.")
+    st.info("💡 ارفع ملف LedgerBook.xml لعرض لوحة القيادة الكاملة.")
